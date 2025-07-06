@@ -1,0 +1,191 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
+namespace MazeSolver
+{
+    public class Cell
+    {
+        public int Row, Col;
+        public bool IsWall = true;
+        public Cell(int r, int c) { Row = r; Col = c; }
+    }
+
+    public class Maze
+    {
+        public int Rows, Cols; // Брой редове и колони
+        public Cell[,] Grid; // Двумерна матрица от клетки
+        private Random rnd = new Random(); // Генератор на случайни числа
+
+        public Maze(int rows, int cols)
+        {
+            Rows = rows % 2 == 0 ? rows + 1 : rows;  // Гарантираме нечетни размери
+            Cols = cols % 2 == 0 ? cols + 1 : cols;
+            Grid = new Cell[Rows, Cols];             // Създаваме решетка
+            for (int r = 0; r < Rows; r++)           
+                for (int c = 0; c < Cols; c++)       // Инициализираме всички клетки
+                    Grid[r, c] = new Cell(r, c);
+            Generate(1, 1);                         // Генерираме лабиринта от (1,1)
+        }
+
+        private void Generate(int r, int c)
+        {
+            Grid[r, c].IsWall = false;       // Маркираме текущата клетка като проход
+            var dirs = new List<(int dr, int dc)> { (0, 2), (2, 0), (0, -2), (-2, 0) };  
+            dirs = dirs.OrderBy(x => rnd.Next()).ToList();   // Разбъркваме посоките
+            foreach (var (dr, dc) in dirs)   // Ако съседната клетка е в граници и е стена ; махаме стената между тях и викаме рекурсивно Generate за нея
+            {
+                int nr = r + dr, nc = c + dc;
+                if (nr > 0 && nr < Rows - 1 && nc > 0 && nc < Cols - 1 && Grid[nr, nc].IsWall)
+                {
+                    Grid[r + dr / 2, c + dc / 2].IsWall = false;
+                    Generate(nr, nc);
+                }
+            }
+        }
+
+        public void Print(Cell start, Cell end, HashSet<(int, int)> path = null)
+        {
+            for (int r = 0; r < Rows; r++)
+            {
+                for (int c = 0; c < Cols; c++)
+                {
+                    if (r == start.Row && c == start.Col) Console.Write("S");
+                    else if (r == end.Row && c == end.Col) Console.Write("E");
+                    else if (path != null && path.Contains((r, c))) Console.Write(".");
+                    else Console.Write(Grid[r, c].IsWall ? "#" : " ");
+                }
+                Console.WriteLine();
+            }
+        }
+    }
+
+    public class Solver
+    {
+        private Maze maze;
+        private Cell start, end;
+        public Solver(Maze m, Cell s, Cell e) { maze = m; start = s; end = e; }
+
+        public HashSet<(int, int)> SolveDFS() { var v = new bool[maze.Rows, maze.Cols]; var p = new HashSet<(int, int)>(); DFS(start.Row, start.Col, v, p); return p; }
+        private bool DFS(int r, int c, bool[,] v, HashSet<(int, int)> path)
+        {
+            if (r < 0 || c < 0 || r >= maze.Rows || c >= maze.Cols || maze.Grid[r, c].IsWall || v[r, c]) return false;
+            v[r, c] = true; path.Add((r, c));
+            if (r == end.Row && c == end.Col) return true;
+            foreach (var d in new[] { (0, 1), (1, 0), (0, -1), (-1, 0) })
+                if (DFS(r + d.Item1, c + d.Item2, v, path)) return true;
+            path.Remove((r, c));
+            return false;
+        }
+
+        public HashSet<(int, int)> SolveBFS()
+        {
+            var queue = new Queue<(int r, int c, (int, int)? prev)>();
+            var visited = new bool[maze.Rows, maze.Cols];
+            var parent = new Dictionary<(int, int), (int, int)>();
+            queue.Enqueue((start.Row, start.Col, null));
+            visited[start.Row, start.Col] = true;
+
+            while (queue.Count > 0)
+            {
+                var cur = queue.Dequeue();
+                if (cur.r == end.Row && cur.c == end.Col) break;
+                foreach (var d in new[] { (0, 1), (1, 0), (0, -1), (-1, 0) })
+                {
+                    int nr = cur.r + d.Item1, nc = cur.c + d.Item2;
+                    if (nr >= 0 && nc >= 0 && nr < maze.Rows && nc < maze.Cols && !visited[nr, nc] && !maze.Grid[nr, nc].IsWall)
+                    {
+                        visited[nr, nc] = true;
+                        parent[(nr, nc)] = (cur.r, cur.c);
+                        queue.Enqueue((nr, nc, (cur.r, cur.c)));
+                    }
+                }
+            }
+
+            var path = new HashSet<(int, int)>();
+            var p = (end.Row, end.Col);
+            if (!parent.ContainsKey(p) && !(p == (start.Row, start.Col))) return path;
+            while (p != (start.Row, start.Col))
+            {
+                path.Add(p); p = parent[p];
+            }
+            path.Add((start.Row, start.Col));
+            return path;
+        }
+
+        public HashSet<(int, int)> SolveAStar()
+        {
+            var open = new PriorityQueue<(int, int), int>();
+            var parent = new Dictionary<(int, int), (int, int)>();
+            var gScore = new Dictionary<(int, int), int>();
+            var fScore = new Dictionary<(int, int), int>();
+            var startP = (start.Row, start.Col);
+            var endP = (end.Row, end.Col);
+            gScore[startP] = 0;
+            fScore[startP] = Heuristic(startP, endP);
+            open.Enqueue(startP, fScore[startP]);
+
+            while (open.Count > 0)
+            {
+                var current = open.Dequeue();
+                if (current == endP) break;
+                foreach (var d in new[] { (0, 1), (1, 0), (0, -1), (-1, 0) })
+                {
+                    var nb = (current.Item1 + d.Item1, current.Item2 + d.Item2);
+                    if (nb.Item1 < 0 || nb.Item2 < 0 || nb.Item1 >= maze.Rows || nb.Item2 >= maze.Cols) continue;
+                    if (maze.Grid[nb.Item1, nb.Item2].IsWall) continue;
+                    int tentative = gScore[current] + 1;
+                    if (!gScore.ContainsKey(nb) || tentative < gScore[nb])
+                    {
+                        parent[nb] = current;
+                        gScore[nb] = tentative;
+                        fScore[nb] = tentative + Heuristic(nb, endP);
+                        open.Enqueue(nb, fScore[nb]);
+                    }
+                }
+            }
+
+            var path = new HashSet<(int, int)>();
+            var p = endP;
+            if (!parent.ContainsKey(p) && p != startP) return path;
+            while (p != startP)
+            {
+                path.Add(p); p = parent[p];
+            }
+            path.Add(startP);
+            return path;
+        }
+
+        private int Heuristic((int, int) a, (int, int) b) => Math.Abs(a.Item1 - b.Item1) + Math.Abs(a.Item2 - b.Item2);
+    }
+
+    class Program
+    {
+        static void Main()
+        {
+            Console.OutputEncoding = System.Text.Encoding.UTF8;
+            var maze = new Maze(21, 41);   // Създаваме 21x41 лабиринт
+            var start = new Cell(1, 1);
+            var end = new Cell(maze.Rows - 2, maze.Cols - 2);
+            var solver = new Solver(maze, start, end);
+
+            Console.WriteLine("Избери алгоритъм: 1=DFS, 2=BFS, 3=A*");
+            var key = Console.ReadKey(true).KeyChar;
+            var sw = System.Diagnostics.Stopwatch.StartNew(); // Засичане на време
+
+            HashSet<(int, int)> path = key switch
+            {
+                '1' => solver.SolveDFS(),
+                '2' => solver.SolveBFS(),
+                '3' => solver.SolveAStar(),
+                _ => solver.SolveDFS()
+            };
+            sw.Stop();
+
+            Console.WriteLine($"\nИзбран алгоритъм: {(key == '1' ? "DFS" : key == '2' ? "BFS" : "A*")}, време: {sw.ElapsedMilliseconds} ms\n");
+            maze.Print(start, end, path);
+            Console.WriteLine("\nEnter за изход...");
+            Console.ReadLine();
+        }
+    }
+}
